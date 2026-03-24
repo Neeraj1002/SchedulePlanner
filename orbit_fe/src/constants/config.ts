@@ -1,0 +1,4 @@
+export const APP_CONFIG = {
+  ATTENDANCE_THRESHOLD: 75,
+  TOAST_DURATION: 3000,
+};
