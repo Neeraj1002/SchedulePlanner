@@ -47,7 +47,7 @@ interface ExtractedDocument {
 @Injectable()
 export class TimetableParserService {
   private readonly logger = new Logger(TimetableParserService.name);
-  private readonly roomRegex = /(?:[A-Z]{2,5}\s+)?[A-Z]{1,5}[- ]?\d{3}\b/g;
+  private readonly roomRegex = /[A-Z]{1,5}[- ]?\d{3}/g;
   private readonly timeRangeRegex =
     /(\d{2}[:.]\d{2})\s*(?:-|to|\u2013|\u2014)\s*(\d{2}[:.]\d{2})/i;
   private readonly days = [
@@ -62,17 +62,17 @@ export class TimetableParserService {
 
   async parseTimetable(buffer: Buffer): Promise<ParsedTimetableResult> {
     const { text, positionedItems } = await this.extractDocument(buffer);
+
     const subjectMap = this.extractSubjectMapping(text);
     const allBatches = this.extractAllBatches(text);
-    const { sessions, warnings } = this.parseGrid(positionedItems, subjectMap);
-    const sessionBatches = sessions.flatMap((session) => session.batches);
-    const mergedBatches = [...new Set([...allBatches, ...sessionBatches])].sort();
 
-    this.logger.log(`Extracted ${mergedBatches.length} batch codes from timetable PDF.`);
+    const { sessions, warnings } = this.parseGrid(positionedItems, subjectMap);
+
+    this.logger.log(`Extracted ${allBatches.length} batch codes from timetable PDF.`);
     this.logger.log(`Extracted ${sessions.length} class sessions from timetable grid.`);
 
     return {
-      allBatches: mergedBatches,
+      allBatches,
       sessions,
       warnings,
     };
@@ -161,7 +161,8 @@ export class TimetableParserService {
   }
 
   private extractAllBatches(text: string): string[] {
-    return [...new Set(text.match(BATCH_CODE_GLOBAL_REGEX) ?? [])].sort();
+    const batches = text.match(/\d{2}[A-Z]{2}\d/g) || [];
+    return [...new Set(batches)].sort();
   }
 
   private parseGrid(
