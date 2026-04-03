@@ -24,20 +24,20 @@ enum DayOfWeek {
 }
 
 model University {
-  id         Int          @id @default(autoincrement())
-  name       String       @unique
-  createdAt  DateTime     @default(now())
-  updatedAt  DateTime     @updatedAt
+  id          Int          @id @default(autoincrement())
+  name        String       @unique
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
   departments Department[]
 }
 
 model Department {
-  id           Int         @id @default(autoincrement())
+  id           Int        @id @default(autoincrement())
   name         String
   universityId Int
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  university   University  @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  university   University @relation(fields: [universityId], references: [id], onDelete: Cascade)
   semesters    Semester[]
   batches      Batch[]
   users        User[]
@@ -46,13 +46,13 @@ model Department {
 }
 
 model Semester {
-  id             Int             @id @default(autoincrement())
+  id             Int               @id @default(autoincrement())
   departmentId   Int
   semesterNumber Int
   academicYear   String
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  department     Department      @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  department     Department        @relation(fields: [departmentId], references: [id], onDelete: Cascade)
   batches        Batch[]
   users          User[]
   classSessions  ClassSession[]
@@ -62,12 +62,12 @@ model Semester {
 }
 
 model Course {
-  id          Int            @id @default(autoincrement())
-  courseCode  String         @unique
-  courseName  String?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
-  sessions    ClassSession[]
+  id         Int            @id @default(autoincrement())
+  courseCode String         @unique
+  courseName String?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  sessions   ClassSession[]
 }
 
 model Batch {
@@ -106,7 +106,7 @@ model ClassSession {
   timetableImport   TimetableImport?    @relation(fields: [timetableImportId], references: [id], onDelete: SetNull)
   batches           ClassSessionBatch[]
 
-  @@unique([semesterId, courseId, dayOfWeek, startTime, classType])
+  @@unique([courseId, dayOfWeek, startTime, classType])
   @@index([semesterId, dayOfWeek, startTime])
 }
 

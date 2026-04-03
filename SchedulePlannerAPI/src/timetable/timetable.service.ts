@@ -257,8 +257,7 @@ export class TimetableService {
 
         const existing = await tx.classSession.findUnique({
           where: {
-            semesterId_courseId_dayOfWeek_startTime_classType: {
-              semesterId: data.semesterId,
+            courseId_dayOfWeek_startTime_classType: {
               courseId: data.courseId,
               dayOfWeek: data.dayOfWeek,
               startTime: data.startTime,
@@ -277,21 +276,13 @@ export class TimetableService {
   }
 
   private async replaceSemesterSessions(tx: Prisma.TransactionClient, semesterId: number) {
-    const existingSessions = await tx.classSession.findMany({
-      where: { semesterId },
-      select: { id: true },
-    });
-
-    const sessionIds = existingSessions.map((session) => session.id);
-    if (sessionIds.length > 0) {
-      await tx.classSessionBatch.deleteMany({
-        where: {
-          classSessionId: {
-            in: sessionIds,
-          },
+    await tx.classSessionBatch.deleteMany({
+      where: {
+        classSession: {
+          semesterId,
         },
-      });
-    }
+      },
+    });
 
     await tx.classSession.deleteMany({
       where: { semesterId },
