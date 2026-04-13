@@ -45,8 +45,11 @@ export class TimetableController {
         academicYear: {
           type: 'string',
         },
+        batchCode: {
+          type: 'string',
+        },
       },
-      required: ['file', 'universityName', 'departmentName', 'semesterNumber', 'academicYear'],
+      required: ['file', 'universityName', 'departmentName', 'semesterNumber', 'academicYear', 'batchCode'],
     },
   })
   @ApiResponse({ status: 201, description: 'Timetable imported successfully.' })

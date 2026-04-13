@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ClassType, DayOfWeek } from '@prisma/client';
-import pdf from 'pdf-parse';
 import {
   BATCH_CODE_GLOBAL_REGEX,
   COURSE_CODE_GLOBAL_REGEX,
@@ -13,6 +12,7 @@ import {
   PositionedTextItem,
   TimeRow,
 } from './parser.types';
+import pdfParse = require('pdf-parse');
 
 type PdfJsModule = {
   getDocument: (input: { data: Uint8Array }) => {
@@ -83,7 +83,7 @@ export class TimetableParserService {
   }
 
   private async extractDocument(buffer: Buffer): Promise<ExtractedDocument> {
-    const textResult = await pdf(buffer);
+    const textResult = await pdfParse(buffer);
     const positionedItems = await this.extractPositionedText(buffer);
 
     return {
@@ -136,11 +136,13 @@ export class TimetableParserService {
     );
     const candidateLines = subjectHeaderIndex >= 0 ? lines.slice(subjectHeaderIndex + 1) : lines;
 
+    const debugFragments: any[] = [];
     for (const line of candidateLines) {
       const fragments = line
-        .split(/(?=[A-Z]{2,4}-?\d{3})/)
+        .split(/(?=[A-Z]{3}-\d{3})/)
         .map((fragment) => this.normalizeWhitespace(fragment))
         .filter(Boolean);
+      debugFragments.push({ line, fragments });
 
       for (const fragment of fragments) {
         const code = this.findCourseCode(fragment);
@@ -148,7 +150,16 @@ export class TimetableParserService {
           continue;
         }
 
-        const cleanedName = this.cleanSubjectName(fragment.replace(code, ' '));
+        let nameFragment = fragment;
+        const roomMatches = fragment.match(this.roomRegex) || [];
+        const actualRoom = roomMatches.find((r) => r !== code);
+        if (actualRoom) {
+          nameFragment = fragment.substring(0, fragment.indexOf(actualRoom));
+        }
+
+        const cleanedName = this.cleanSubjectName(nameFragment.replace(code, ' '));
+        console.log(`FRAGMENT: ${fragment} -> CODE: ${code} -> ACTUAL_ROOM: ${actualRoom} -> NAME_FRAG: ${nameFragment} -> CLEANED: ${cleanedName}`);
+
         if (!cleanedName || this.looksLikeGridPayload(cleanedName)) {
           continue;
         }
@@ -186,20 +197,55 @@ export class TimetableParserService {
 
     for (const row of timeRows) {
       const columnsForPage = dayColumns.filter((column) => column.page === row.page);
+      const rowItems = items.filter((item) => 
+        item.page === row.page && 
+        item.y <= row.minY && 
+        item.y >= row.maxY
+      );
+
+      // Pre-process items in this row to handle merged multi-column lines
+      const columnFills: Map<DayOfWeek, string[]> = new Map();
+
+      for (const item of rowItems) {
+        const chunks = this.splitCellIntoChunks(item.text);
+        
+        if (chunks.length <= 1) {
+          // Single session chunk, assign to column by centerX
+          const centerX = item.x + item.width / 2;
+          const column = columnsForPage.find(c => centerX >= c.minX && centerX < c.maxX);
+          if (column) {
+            const list = columnFills.get(column.dayOfWeek) ?? [];
+            list.push(item.text);
+            columnFills.set(column.dayOfWeek, list);
+          }
+        } else {
+          // Merged line with multiple sessions spanning columns
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            const startIndex = item.text.indexOf(chunk);
+            if (startIndex === -1) continue;
+
+            const charRatio = (startIndex + chunk.length / 2) / item.text.length;
+            const chunkCenterX = item.x + charRatio * item.width;
+            
+            const column = columnsForPage.find(c => chunkCenterX >= c.minX && chunkCenterX < c.maxX);
+            if (column) {
+              const list = columnFills.get(column.dayOfWeek) ?? [];
+              list.push(chunk);
+              columnFills.set(column.dayOfWeek, list);
+            }
+          }
+        }
+      }
 
       for (const column of columnsForPage) {
-        const cellItems = items.filter(
-          (item) =>
-            item.page === row.page &&
-            item.x >= column.minX &&
-            item.x < column.maxX &&
-            item.y <= row.minY &&
-            item.y >= row.maxY &&
-            item.y < column.headerY - 5,
-        );
+        const cellChunks = columnFills.get(column.dayOfWeek) ?? [];
+        if (cellChunks.length === 0) {
+          continue;
+        }
 
-        const cellText = this.normalizeWhitespace(this.groupCellText(cellItems));
-        if (!cellText) {
+        const cellText = this.normalizeWhitespace(cellChunks.join(' '));
+        if (!cellText || cellText.length < 3) {
           continue;
         }
 
@@ -210,9 +256,21 @@ export class TimetableParserService {
           .filter((session): session is ParsedSession => Boolean(session));
 
         if (parsedChunks.length === 0) {
-          const warning = `Failed parsing row ${row.startTime}-${row.endTime} ${column.dayOfWeek} on page ${row.page}: ${cellText}`;
-          warnings.push(warning);
-          this.logger.warn(warning);
+          const uppercaseText = cellText.toUpperCase();
+          const isKnownNoise =
+            uppercaseText.includes('LUNCH') ||
+            uppercaseText.includes('SEMESTER') ||
+            uppercaseText.includes('PROGRAM NAME') ||
+            uppercaseText.includes('SUBJECT AREA') ||
+            uppercaseText.includes('FACULTY NAME') ||
+            uppercaseText.includes('CREDIT') ||
+            /^[\d.:\s-]+$/.test(uppercaseText); // Only times/numbers
+
+          if (!isKnownNoise && cellText.length > 5) {
+            const warning = `Failed parsing row ${row.startTime}-${row.endTime} ${column.dayOfWeek} on page ${row.page}: ${cellText}`;
+            warnings.push(warning);
+            this.logger.warn(warning);
+          }
           continue;
         }
 
@@ -227,23 +285,30 @@ export class TimetableParserService {
   }
 
   private detectDayColumns(items: PositionedTextItem[]): DayColumn[] {
-    const candidates = items
-      .map((item) => {
-        const normalized = item.text.toLowerCase();
-        const match = this.days.find((day) => normalized.includes(day.label));
-        if (!match) {
-          return null;
-        }
+    const candidates: any[] = [];
 
-        return {
-          page: item.page,
-          x: item.x + item.width / 2,
-          headerY: item.y,
-          dayOfWeek: match.value,
-        };
-      })
-      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
-      .sort((a, b) => (a.page - b.page) || (a.x - b.x));
+    for (const item of items) {
+      const normalized = item.text.toLowerCase();
+      // Look for all day labels in this specific item
+      for (const day of this.days) {
+        let index = normalized.indexOf(day.label);
+        // While loop in case a day appears twice, though unlikely in a header
+        while (index !== -1) {
+          // Estimate X by mapping character position to visual width
+          const charRatio = (index + day.label.length / 2) / normalized.length;
+          candidates.push({
+            page: item.page,
+            x: item.x + charRatio * item.width,
+            headerY: item.y,
+            dayOfWeek: day.value,
+          });
+          
+          index = normalized.indexOf(day.label, index + 1);
+        }
+      }
+    }
+
+    candidates.sort((a, b) => (a.page - b.page) || (a.x - b.x));
 
     const groupedByPage = new Map<number, typeof candidates>();
     for (const candidate of candidates) {
@@ -265,8 +330,10 @@ export class TimetableParserService {
       uniqueDays.forEach((candidate, index) => {
         const previous = uniqueDays[index - 1];
         const next = uniqueDays[index + 1];
-        const minX = previous ? (previous.x + candidate.x) / 2 : candidate.x - 70;
-        const maxX = next ? (candidate.x + next.x) / 2 : candidate.x + 70;
+        // Ensure leftmost column starts at 0 to capture sessions that might start early
+        const minX = previous ? (previous.x + candidate.x) / 2 : 0;
+        // Ensure rightmost column extends far enough
+        const maxX = next ? (candidate.x + next.x) / 2 : 5000;
 
         columns.push({
           page,
@@ -408,11 +475,13 @@ export class TimetableParserService {
     room: string | null,
     batches: string[],
   ): string | null {
-    let remaining = ` ${text} `;
+    let remaining = text;
     remaining = remaining.replace(/\b[LTP]\b/gi, ' ');
     remaining = remaining.replace(new RegExp(this.escapeRegex(courseCode), 'g'), ' ');
     remaining = remaining.replace(/\bBatch(?:es)?\s*\d+\b/gi, ' ');
     remaining = remaining.replace(/\bBatch(?:es)?\b/gi, ' ');
+    remaining = remaining.replace(/\bLUNCH\b/gi, ' ');
+    remaining = remaining.replace(/\bAPJ\b/gi, ' ');
 
     if (room) {
       remaining = remaining.replace(new RegExp(this.escapeRegex(room), 'g'), ' ');
@@ -422,28 +491,23 @@ export class TimetableParserService {
       remaining = remaining.replace(new RegExp(this.escapeRegex(batch), 'g'), ' ');
     }
 
-    remaining = remaining
-      .replace(/\s+/g, ' ')
-      .replace(/[,:/]/g, ' ')
-      .trim();
+    const uncleanedTokens = remaining.split(/[,/|:]/).map((t) => t.trim()).filter(Boolean);
+    const cleanedTokens = uncleanedTokens.map((token) => {
+      return token
+        .split(' ')
+        .filter((word) => !this.findCourseCode(word))
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }).filter(Boolean);
 
-    if (!remaining) {
-      return null;
-    }
-
-    const cleaned = remaining
-      .split(' ')
-      .filter((token) => !this.findCourseCode(token))
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    return cleaned || null;
+    const uniqueTokens = [...new Set(cleanedTokens)];
+    return uniqueTokens.length > 0 ? uniqueTokens.join(', ') : null;
   }
 
   private splitCellIntoChunks(text: string): string[] {
     const chunks = text
-      .split(/(?=\b[LTP]\b\s+[A-Z]{2,4}-?\d{3}\b)/)
+      .split(/(?=[LTP](?:\s+|[.-])[A-Z]{2,4}-?\d{3}\b)/)
       .map((chunk) => this.normalizeWhitespace(chunk))
       .filter(Boolean);
 
@@ -516,6 +580,7 @@ export class TimetableParserService {
   private cleanSubjectName(value: string): string | null {
     const cleaned = this.normalizeWhitespace(
       value
+        .replace(/\[.*?\]/g, ' ')
         .replace(/\b[A-Z]\d+\b/g, ' ')
         .replace(/\b\d+(?:\.\d+)?\s*credits?\b/gi, ' ')
         .replace(/\bslot\b/gi, ' ')
