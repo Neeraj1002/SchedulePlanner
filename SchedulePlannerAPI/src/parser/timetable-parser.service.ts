@@ -47,7 +47,7 @@ interface ExtractedDocument {
 @Injectable()
 export class TimetableParserService {
   private readonly logger = new Logger(TimetableParserService.name);
-  private readonly roomRegex = /[A-Z]{1,5}[- ]?\d{3}/g;
+  private readonly roomRegex = /\b[A-Z]{2,5}(?:\s+[A-Z]{2,5})?-\d{3,4}\b/g;
   private readonly timeRangeRegex =
     /(\d{2}[:.]\d{2})\s*(?:-|to|\u2013|\u2014)\s*(\d{2}[:.]\d{2})/i;
   private readonly days = [
@@ -228,21 +228,21 @@ export class TimetableParserService {
 
   private detectDayColumns(items: PositionedTextItem[]): DayColumn[] {
     const candidates = items
-      .map((item) => {
+      .flatMap((item) => {
         const normalized = item.text.toLowerCase();
-        const match = this.days.find((day) => normalized.includes(day.label));
-        if (!match) {
-          return null;
+        const found: Array<{ page: number; x: number; headerY: number; dayOfWeek: DayOfWeek }> = [];
+        for (const day of this.days) {
+          if (normalized.includes(day.label)) {
+            found.push({
+              page: item.page,
+              x: item.x + item.width / 2,
+              headerY: item.y,
+              dayOfWeek: day.value,
+            });
+          }
         }
-
-        return {
-          page: item.page,
-          x: item.x + item.width / 2,
-          headerY: item.y,
-          dayOfWeek: match.value,
-        };
+        return found;
       })
-      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
       .sort((a, b) => (a.page - b.page) || (a.x - b.x));
 
     const groupedByPage = new Map<number, typeof candidates>();
@@ -262,11 +262,18 @@ export class TimetableParserService {
         );
       });
 
+      const xs = uniqueDays.map((c) => c.x);
+      let edgeMargin = 70;
+      if (xs.length > 1) {
+        const spacings = xs.slice(1).map((x, i) => x - xs[i]);
+        edgeMargin = spacings.reduce((a, b) => a + b, 0) / spacings.length / 2;
+      }
+
       uniqueDays.forEach((candidate, index) => {
         const previous = uniqueDays[index - 1];
         const next = uniqueDays[index + 1];
-        const minX = previous ? (previous.x + candidate.x) / 2 : candidate.x - 70;
-        const maxX = next ? (candidate.x + next.x) / 2 : candidate.x + 70;
+        const minX = previous ? (previous.x + candidate.x) / 2 : candidate.x - edgeMargin;
+        const maxX = next ? (candidate.x + next.x) / 2 : candidate.x + edgeMargin;
 
         columns.push({
           page,
@@ -310,6 +317,13 @@ export class TimetableParserService {
     const rows: TimeRow[] = [];
     for (const [page, pageLines] of groupedByPage.entries()) {
       const sorted = [...pageLines].sort((a, b) => b.y - a.y);
+
+      let rowMargin = 18;
+      if (sorted.length > 1) {
+        const heights = sorted.slice(0, -1).map((line, i) => Math.abs(line.y - sorted[i + 1].y));
+        rowMargin = heights.reduce((a, b) => a + b, 0) / heights.length / 2;
+      }
+
       sorted.forEach((line, index) => {
         const previous = sorted[index - 1];
         const next = sorted[index + 1];
@@ -318,8 +332,8 @@ export class TimetableParserService {
           page,
           startTime: line.startTime,
           endTime: line.endTime,
-          minY: previous ? (previous.y + line.y) / 2 : line.y + 18,
-          maxY: next ? (line.y + next.y) / 2 : line.y - 18,
+          minY: previous ? (previous.y + line.y) / 2 : line.y + rowMargin,
+          maxY: next ? (line.y + next.y) / 2 : line.y - rowMargin,
           centerY: line.y,
         });
       });
@@ -516,6 +530,7 @@ export class TimetableParserService {
   private cleanSubjectName(value: string): string | null {
     const cleaned = this.normalizeWhitespace(
       value
+        .replace(/\[.*?\]/g, ' ')
         .replace(/\b[A-Z]\d+\b/g, ' ')
         .replace(/\b\d+(?:\.\d+)?\s*credits?\b/gi, ' ')
         .replace(/\bslot\b/gi, ' ')
