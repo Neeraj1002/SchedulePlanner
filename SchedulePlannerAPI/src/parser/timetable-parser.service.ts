@@ -368,36 +368,32 @@ export class TimetableParserService {
       return results;
     }
 
-    // Sort top-to-bottom
-    const sorted = [...pageItems].sort((a, b) => b.y - a.y);
+    // Keep only items whose text is purely time-like: digits, dots, colons, dashes.
+    // This strips out letter-based noise (day names, course codes, faculty names, email
+    // headers, etc.) so only real time-column fragments remain.
+    const timeOnly = pageItems
+      .filter((item) => /^[\d.:\u2013\u2014\s-]+$/.test(item.text.trim()) && item.text.trim().length > 0)
+      .sort((a, b) => b.y - a.y); // top-to-bottom
 
     this.logger.debug(
-      `[page ${page}] detectTimeRangesFromVerticalClusters: ${sorted.length} items, ` +
-        `X range [${Math.min(...sorted.map((i) => i.x)).toFixed(1)}, ` +
-        `${Math.max(...sorted.map((i) => i.x + i.width)).toFixed(1)}]`,
-    );
-    this.logger.debug(
-      `[page ${page}] Sample items: ${sorted
-        .slice(0, 10)
-        .map((i) => `"${i.text}"@(${i.x.toFixed(0)},${i.y.toFixed(0)})`)
-        .join(', ')}`,
+      `[page ${page}] time-only items: ${timeOnly.length} — ` +
+        timeOnly.slice(0, 8).map((i) => `"${i.text}"@(${i.x.toFixed(0)},${i.y.toFixed(0)})`).join(', '),
     );
 
     const seen = new Set<string>();
 
-    for (const anchor of sorted) {
-      // Collect items at a similar X position (within ±50 units) and
-      // within a 150-unit vertical window below this anchor.
-      // Using X-proximity instead of a page-width percentage makes this
-      // layout-agnostic — no assumptions about how wide the page is.
-      const cluster = sorted.filter(
+    for (const anchor of timeOnly) {
+      // Cluster: same X column (±30 units) within a 200-unit vertical window below anchor.
+      // Tighter X keeps the cluster inside the narrow time-column strip;
+      // larger Y handles tall rows whose items span a big vertical range.
+      const cluster = timeOnly.filter(
         (item) =>
-          Math.abs(item.x - anchor.x) <= 50 &&
+          Math.abs(item.x - anchor.x) <= 30 &&
           item.y <= anchor.y &&
-          anchor.y - item.y <= 150,
+          anchor.y - item.y <= 200,
       );
 
-      // Join text, remove spaces, normalise dots to colons, then look for HH:MM-HH:MM
+      // Join without spaces, normalise dots → colons, then look for HH:MM-HH:MM
       const combined = cluster
         .map((item) => item.text.replace(/\s+/g, ''))
         .join('')
@@ -413,7 +409,9 @@ export class TimetableParserService {
       }
     }
 
-    this.logger.debug(`[page ${page}] Fallback found ${results.length} time rows: ${results.map((r) => r.startTime).join(', ')}`);
+    this.logger.debug(
+      `[page ${page}] fallback rows: ${results.length} — ${results.map((r) => r.startTime).join(', ')}`,
+    );
 
     return results;
   }
