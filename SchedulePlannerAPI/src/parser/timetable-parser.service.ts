@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ClassType, DayOfWeek } from '@prisma/client';
-import pdf from 'pdf-parse';
+import * as pdfParse from 'pdf-parse';
 import {
   BATCH_CODE_GLOBAL_REGEX,
   COURSE_CODE_GLOBAL_REGEX,
@@ -83,6 +83,7 @@ export class TimetableParserService {
   }
 
   private async extractDocument(buffer: Buffer): Promise<ExtractedDocument> {
+    const pdf = (pdfParse as any).default ?? pdfParse;
     const textResult = await pdf(buffer);
     const positionedItems = await this.extractPositionedText(buffer);
 
