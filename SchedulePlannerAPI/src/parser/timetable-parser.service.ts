@@ -47,7 +47,7 @@ interface ExtractedDocument {
 @Injectable()
 export class TimetableParserService {
   private readonly logger = new Logger(TimetableParserService.name);
-  private readonly roomRegex = /\b[A-Z]{2,5}(?:\s+[A-Z]{2,5})?-\d{3,4}\b/g;
+  private readonly roomRegex = /\b[A-Z]{2,5}(?:\s+[A-Z]{2,5})?-?\d{3,4}\b/g;
   private readonly timeRangeRegex =
     /(\d{2}[:.]\d{2})\s*(?:-|to|\u2013|\u2014)\s*(\d{2}[:.]\d{2})/i;
   private readonly days = [
@@ -138,7 +138,7 @@ export class TimetableParserService {
 
     for (const line of candidateLines) {
       const fragments = line
-        .split(/(?=[A-Z]{2,4}-?\d{3})/)
+        .split(/(?=[A-Z]{3,4}-?\d{3})/)
         .map((fragment) => this.normalizeWhitespace(fragment))
         .filter(Boolean);
 
