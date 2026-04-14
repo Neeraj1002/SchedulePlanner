@@ -315,6 +315,22 @@ export class TimetableParserService {
       groupedByPage.set(timeLine.page, pageEntries);
     }
 
+    // Fallback for pages where the time column renders as stacked single items
+    // (e.g. "08." / "00" / "-" / "08." / "55" instead of "08.00 - 08.55")
+    const allPages = [...new Set(items.map((i) => i.page))];
+    for (const page of allPages) {
+      if (groupedByPage.get(page)?.length) {
+        continue;
+      }
+      const fallback = this.detectTimeRangesFromVerticalClusters(
+        items.filter((i) => i.page === page),
+        page,
+      );
+      if (fallback.length > 0) {
+        groupedByPage.set(page, fallback);
+      }
+    }
+
     const rows: TimeRow[] = [];
     for (const [page, pageLines] of groupedByPage.entries()) {
       const sorted = [...pageLines].sort((a, b) => b.y - a.y);
@@ -341,6 +357,49 @@ export class TimetableParserService {
     }
 
     return rows;
+  }
+
+  private detectTimeRangesFromVerticalClusters(
+    pageItems: PositionedTextItem[],
+    page: number,
+  ): Array<{ page: number; y: number; startTime: string; endTime: string }> {
+    const results: Array<{ page: number; y: number; startTime: string; endTime: string }> = [];
+    if (pageItems.length === 0) {
+      return results;
+    }
+
+    // Only consider items in the leftmost ~18% of the page (the time column)
+    const maxX = Math.max(...pageItems.map((i) => i.x + i.width));
+    const leftThreshold = maxX * 0.18;
+    const leftItems = pageItems
+      .filter((item) => item.x <= leftThreshold)
+      .sort((a, b) => b.y - a.y);
+
+    const seen = new Set<string>();
+
+    for (const anchor of leftItems) {
+      // Collect items within an 80-unit vertical window below this anchor
+      const cluster = leftItems.filter(
+        (item) => item.y <= anchor.y && anchor.y - item.y <= 80,
+      );
+
+      // Join text, remove spaces, normalise dots to colons, then look for HH:MM-HH:MM
+      const combined = cluster
+        .map((item) => item.text.replace(/\s+/g, ''))
+        .join('')
+        .replace(/\./g, ':');
+
+      const match = combined.match(/(\d{2}:\d{2})-(\d{2}:\d{2})/);
+      if (match) {
+        const startTime = this.normalizeTime(match[1]);
+        if (!seen.has(startTime)) {
+          seen.add(startTime);
+          results.push({ page, y: anchor.y, startTime, endTime: this.normalizeTime(match[2]) });
+        }
+      }
+    }
+
+    return results;
   }
 
   private parseSessionChunk(
