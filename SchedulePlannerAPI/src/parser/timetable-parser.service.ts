@@ -368,9 +368,10 @@ export class TimetableParserService {
       return results;
     }
 
-    // Only consider items in the leftmost ~18% of the page (the time column)
-    const maxX = Math.max(...pageItems.map((i) => i.x + i.width));
-    const leftThreshold = maxX * 0.18;
+    // Anchor to the leftmost item on the page and include everything within 100 units.
+    // This robustly captures the time column regardless of absolute X coordinates.
+    const minX = Math.min(...pageItems.map((i) => i.x));
+    const leftThreshold = minX + 100;
     const leftItems = pageItems
       .filter((item) => item.x <= leftThreshold)
       .sort((a, b) => b.y - a.y);
@@ -378,9 +379,10 @@ export class TimetableParserService {
     const seen = new Set<string>();
 
     for (const anchor of leftItems) {
-      // Collect items within an 80-unit vertical window below this anchor
+      // 150-unit vertical window: handles tall rows where a single time label
+      // (e.g. "08." / "00" / "-" / "08." / "55") can span 90-130 PDF units.
       const cluster = leftItems.filter(
-        (item) => item.y <= anchor.y && anchor.y - item.y <= 80,
+        (item) => item.y <= anchor.y && anchor.y - item.y <= 150,
       );
 
       // Join text, remove spaces, normalise dots to colons, then look for HH:MM-HH:MM
