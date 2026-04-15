@@ -24,4 +24,9 @@ export class UploadTimetableDto {
   @IsString()
   @IsNotEmpty()
   academicYear: string;
+
+  @ApiProperty({ example: '25EE3' })
+  @IsString()
+  @IsNotEmpty()
+  batchCode: string;
 }

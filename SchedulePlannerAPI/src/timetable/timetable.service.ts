@@ -22,7 +22,7 @@ export class TimetableService {
     private readonly prisma: PrismaService,
     private readonly parser: TimetableParserService,
     private readonly configService: ConfigService,
-  ) {}
+  ) { }
 
   async uploadTimetable(
     file: Express.Multer.File | undefined,
@@ -93,18 +93,26 @@ export class TimetableService {
         const courseCache = new Map<string, number>();
         const batchCache = new Map<string, number>();
 
-        for (const batchCode of parsed.allBatches) {
-          const batchId = await this.resolveBatchId(
-            tx,
-            batchCache,
-            batchCode,
-            department.id,
-            semester.id,
-          );
-          batchCache.set(batchCode, batchId);
-        }
+        // Only resolve the specific batch requested by the user
+        const targetBatchId = await this.resolveBatchId(
+          tx,
+          batchCache,
+          metadata.batchCode,
+          department.id,
+          semester.id,
+        );
+        batchCache.set(metadata.batchCode, targetBatchId);
 
-        for (const session of parsed.sessions) {
+        // Filter sessions by the target batch
+        const filteredSessions = parsed.sessions.filter((s) =>
+          s.batches.includes(metadata.batchCode),
+        );
+
+        this.logger.log(
+          `Uploading timetable for batch ${metadata.batchCode}. Filtered ${parsed.sessions.length} sessions down to ${filteredSessions.length}.`,
+        );
+
+        for (const session of filteredSessions) {
           const courseId = await this.resolveCourseId(
             tx,
             courseCache,
@@ -146,7 +154,7 @@ export class TimetableService {
         }
 
         this.logger.log(
-          `Imported ${parsed.sessions.length} sessions and ${parsed.allBatches.length} batches for semester ${semester.id}.`,
+          `Imported ${filteredSessions.length} sessions for batch ${metadata.batchCode} in semester ${semester.id}.`,
         );
 
         return {
@@ -244,6 +252,22 @@ export class TimetableService {
     tx: Prisma.TransactionClient,
     data: Prisma.ClassSessionUncheckedCreateInput,
   ): Promise<ClassSession> {
+    // Check if it already exists first to avoid poisoning the transaction on Postgres
+    const existing = await tx.classSession.findUnique({
+      where: {
+        courseId_dayOfWeek_startTime_classType: {
+          courseId: data.courseId,
+          dayOfWeek: data.dayOfWeek,
+          startTime: data.startTime,
+          classType: data.classType,
+        },
+      },
+    });
+
+    if (existing) {
+      return existing;
+    }
+
     try {
       return await tx.classSession.create({ data });
     } catch (error) {
@@ -252,25 +276,9 @@ export class TimetableService {
         error.code === 'P2002'
       ) {
         this.logger.warn(
-          `Duplicate session hit unique constraint for ${data.startTime} ${data.dayOfWeek} ${data.courseId}; reusing existing session.`,
+          `Duplicate session hit unique constraint for ${data.startTime} ${data.dayOfWeek} ${data.courseId} after check; re-fetching.`,
         );
-
-        const existing = await tx.classSession.findUnique({
-          where: {
-            courseId_dayOfWeek_startTime_classType: {
-              courseId: data.courseId,
-              dayOfWeek: data.dayOfWeek,
-              startTime: data.startTime,
-              classType: data.classType,
-            },
-          },
-        });
-
-        if (existing) {
-          return existing;
-        }
       }
-
       throw error;
     }
   }

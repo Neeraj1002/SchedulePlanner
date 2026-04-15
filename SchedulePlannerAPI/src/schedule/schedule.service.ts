@@ -29,7 +29,7 @@ const DAY_LABELS: Record<DayOfWeek, string> = {
 
 @Injectable()
 export class ScheduleService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async getMySchedule(userId: number | undefined) {
     if (!userId) {
@@ -98,6 +98,12 @@ export class ScheduleService {
 
       return left.startTime.localeCompare(right.startTime);
     });
+
+    const formatTime = (totalMinutes: number) => {
+      const h = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
+      const m = (totalMinutes % 60).toString().padStart(2, '0');
+      return `${h}:${m}`;
+    };
 
     for (const session of orderedSessions) {
       grouped[DAY_LABELS[session.dayOfWeek]].push({
