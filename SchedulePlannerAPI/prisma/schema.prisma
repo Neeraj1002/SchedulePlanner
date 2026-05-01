@@ -7,6 +7,10 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+//////////////////////
+// ENUMS
+//////////////////////
+
 enum ClassType {
   LECTURE
   TUTORIAL
@@ -23,11 +27,33 @@ enum DayOfWeek {
   SUNDAY
 }
 
+enum SemesterType {
+  AUTUMN
+  SPRING
+}
+
+enum OccurrenceStatus {
+  SCHEDULED
+  CANCELLED
+  EXTRA
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  BUNKED
+}
+
+//////////////////////
+// CORE STRUCTURE
+//////////////////////
+
 model University {
   id          Int          @id @default(autoincrement())
   name        String       @unique
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
+
   departments Department[]
 }
 
@@ -37,38 +63,71 @@ model Department {
   universityId Int
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
+
   university   University @relation(fields: [universityId], references: [id], onDelete: Cascade)
   semesters    Semester[]
+  courses      Course[]
   batches      Batch[]
-  users        User[]
+  offerings    CourseOffering[]
 
   @@unique([universityId, name])
 }
 
 model Semester {
-  id             Int               @id @default(autoincrement())
+  id             Int          @id @default(autoincrement())
   departmentId   Int
-  semesterNumber Int
-  academicYear   String
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-  department     Department        @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  semesterNumber Int          // 1,2,3,4...
+  semesterType   SemesterType // AUTUMN / SPRING
+  academicYear   String       // "2025-2026"
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  department     Department   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
   batches        Batch[]
-  users          User[]
   classSessions  ClassSession[]
   imports        TimetableImport[]
 
   @@unique([departmentId, semesterNumber, academicYear])
 }
 
+//////////////////////
+// COURSE LAYER
+//////////////////////
+
 model Course {
-  id         Int            @id @default(autoincrement())
-  courseCode String         @unique
-  courseName String?
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
-  sessions   ClassSession[]
+  id           Int      @id @default(autoincrement())
+  courseCode   String
+  courseName   String?
+  departmentId Int
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  sessions     ClassSession[]
+  offerings    CourseOffering[]
+
+  @@unique([courseCode, departmentId])
+  @@index([departmentId])
 }
+
+model CourseOffering {
+  id           Int          @id @default(autoincrement())
+  courseId     Int
+  departmentId Int
+  year         Int
+  semesterType SemesterType
+  createdAt    DateTime     @default(now())
+
+  course       Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  department   Department   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, departmentId, year, semesterType])
+  @@index([departmentId, year, semesterType])
+}
+
+//////////////////////
+// BATCH + USER
+//////////////////////
 
 model Batch {
   id           Int                 @id @default(autoincrement())
@@ -77,8 +136,10 @@ model Batch {
   semesterId   Int
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
+
   department   Department          @relation(fields: [departmentId], references: [id], onDelete: Cascade)
   semester     Semester            @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+
   users        User[]
   sessions     ClassSessionBatch[]
 
@@ -86,27 +147,52 @@ model Batch {
   @@index([semesterId])
 }
 
-model ClassSession {
-  id                Int                 @id @default(autoincrement())
-  courseId          Int
-  semesterId        Int
-  timetableImportId Int?
-  classType         ClassType
-  dayOfWeek         DayOfWeek
-  startTime         String
-  endTime           String
-  room              String?
-  faculty           String?
-  rawText           String?
-  sourcePage        Int?
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
-  course            Course              @relation(fields: [courseId], references: [id], onDelete: Restrict)
-  semester          Semester            @relation(fields: [semesterId], references: [id], onDelete: Cascade)
-  timetableImport   TimetableImport?    @relation(fields: [timetableImportId], references: [id], onDelete: SetNull)
-  batches           ClassSessionBatch[]
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String   @unique
+  batchId   Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@unique([courseId, dayOfWeek, startTime, classType])
+  batch       Batch?      @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  attendances Attendance[]
+
+  @@index([batchId])
+}
+
+//////////////////////
+// TIMETABLE (TEMPLATE)
+//////////////////////
+
+model ClassSession {
+  id         Int        @id @default(autoincrement())
+  courseId   Int
+  semesterId Int
+  importId   Int?
+
+  classType  ClassType
+  dayOfWeek  DayOfWeek
+  startTime  String
+  endTime    String
+
+  room       String?
+  faculty    String?
+
+  rawText    String?
+  sourcePage Int?
+
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  course     Course     @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  semester   Semester   @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+  import     TimetableImport? @relation(fields: [importId], references: [id], onDelete: SetNull)
+
+  batches     ClassSessionBatch[]
+  occurrences ClassOccurrence[]
+
+  @@unique([courseId, semesterId, dayOfWeek, startTime, classType])
   @@index([semesterId, dayOfWeek, startTime])
 }
 
@@ -114,6 +200,7 @@ model ClassSessionBatch {
   id             Int          @id @default(autoincrement())
   classSessionId Int
   batchId        Int
+
   classSession   ClassSession @relation(fields: [classSessionId], references: [id], onDelete: Cascade)
   batch          Batch        @relation(fields: [batchId], references: [id], onDelete: Cascade)
 
@@ -121,33 +208,54 @@ model ClassSessionBatch {
   @@index([batchId])
 }
 
-model User {
-  id           Int         @id @default(autoincrement())
-  name         String
-  email        String      @unique
-  batchId      Int?
-  departmentId Int?
-  semesterId   Int?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  batch        Batch?      @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  semester     Semester?   @relation(fields: [semesterId], references: [id], onDelete: SetNull)
+//////////////////////
+// REAL-WORLD LAYER
+//////////////////////
 
-  @@index([batchId])
-  @@index([semesterId])
+model ClassOccurrence {
+  id             Int              @id @default(autoincrement())
+  classSessionId Int
+  date           DateTime
+  status         OccurrenceStatus @default(SCHEDULED)
+
+  source         String?          // AUTO | MANUAL
+  createdAt      DateTime         @default(now())
+
+  classSession   ClassSession     @relation(fields: [classSessionId], references: [id], onDelete: Cascade)
+  attendances    Attendance[]
+
+  @@unique([classSessionId, date])
+  @@index([date])
 }
 
+model Attendance {
+  id           Int              @id @default(autoincrement())
+  occurrenceId Int
+  userId       Int
+  status       AttendanceStatus
+  markedAt     DateTime         @default(now())
+
+  occurrence   ClassOccurrence  @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([occurrenceId, userId])
+  @@index([userId])
+}
+
+//////////////////////
+// IMPORT TRACKING
+//////////////////////
+
 model TimetableImport {
-  id             Int            @id @default(autoincrement())
-  semesterId     Int
-  filename       String
-  storedFilePath String
-  checksum       String
-  importedAt     DateTime       @default(now())
+  id         Int        @id @default(autoincrement())
+  semesterId Int
+  filename   String
+  checksum   String
+  importedAt DateTime   @default(now())
   parserWarnings Json?
-  semester       Semester       @relation(fields: [semesterId], references: [id], onDelete: Cascade)
-  sessions       ClassSession[]
+
+  semester   Semester   @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+  sessions   ClassSession[]
 
   @@index([semesterId, importedAt])
   @@index([checksum])
