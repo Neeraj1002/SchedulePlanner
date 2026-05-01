@@ -17,5 +17,15 @@
     "noImplicitAny": false,
     "strictBindCallApply": false,
     "noFallthroughCasesInSwitch": true
-  }
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test",
+    "**/*spec.ts",
+    "src/parser/**/*",
+    "src/schedule/**/*",
+    "src/timetable/**/*",
+    "src/user/**/*"
+  ]
 }
